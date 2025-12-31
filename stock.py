@@ -1,0 +1,227 @@
+import yfinance as yf
+import pandas as pd
+import pandas_ta as ta
+import streamlit as st
+
+# ================= CONFIG =================
+SYMBOLS = [
+    "360ONE.NS","ABB.NS","APLAPOLLO.NS","AUBANK.NS","ADANIENSOL.NS","ADANIENT.NS",
+    "ADANIGREEN.NS","ADANIPORTS.NS","ABCAPITAL.NS","ALKEM.NS","AMBER.NS",
+    "AMBUJACEM.NS","ANGELONE.NS","APOLLOHOSP.NS","ASHOKLEY.NS","ASIANPAINT.NS",
+    "ASTRAL.NS","AUROPHARMA.NS","DMART.NS","AXISBANK.NS","BSE.NS","BAJAJ-AUTO.NS",
+    "BAJFINANCE.NS","BAJAJFINSV.NS","BANDHANBNK.NS","BANKBARODA.NS","BDL.NS",
+    "BEL.NS","BHARATFORG.NS","BHEL.NS","BPCL.NS","BHARTIARTL.NS","BIOCON.NS",
+    "BRITANNIA.NS","CGPOWER.NS","CANBK.NS","CHOLAFIN.NS","CIPLA.NS","COALINDIA.NS",
+    "COFORGE.NS","DLF.NS","DIVISLAB.NS","DIXON.NS","DRREDDY.NS","EICHERMOT.NS",
+    "EXIDEIND.NS","INFY.NS","ICICIBANK.NS","ITC.NS","JSWSTEEL.NS","KOTAKBANK.NS",
+    "LT.NS","MARUTI.NS","RELIANCE.NS","SBIN.NS","TCS.NS","TATASTEEL.NS","WIPRO.NS"
+]
+
+INTERVAL = "5m"
+PERIOD = "5d"
+SuperTrend_LENGTH = 20
+SuperTrend_MULT = 2
+# =========================================
+
+st.set_page_config(page_title="Algo Scanner", layout="wide")
+st.title("📊 Indian Market Algo Scanner")
+
+# ---------------- DATA FUNCTIONS ----------------
+@st.cache_data(ttl=300)
+def fetch_data(symbol):
+    df = yf.download(
+        symbol,
+        interval=INTERVAL,
+        period=PERIOD,
+        progress=False
+    )
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    df = df.dropna()
+
+    # 🔧 TIMEZONE FIX: UTC → IST
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert("Asia/Kolkata")
+    else:
+        df.index = df.index.tz_convert("Asia/Kolkata")
+
+    # Optional: remove timezone info for clean display
+    df.index = df.index.tz_localize(None)
+
+    return df
+
+
+def apply_indicators(df):
+    df["EMA8"] = ta.ema(df["Close"], length=8)
+    df["EMA30"] = ta.ema(df["Close"], length=30)
+
+    st_df = ta.supertrend(
+        high=df["High"], low=df["Low"], close=df["Close"],
+        length=SuperTrend_LENGTH, multiplier=SuperTrend_MULT
+    )
+    df = pd.concat([df, st_df], axis=1)
+
+    macd = ta.macd(df["Close"])
+    df = pd.concat([df, macd], axis=1)
+    return df
+
+# ---------------- STRATEGIES ----------------
+def supertrend_macd(symbol):
+    df = fetch_data(symbol)
+    df = apply_indicators(df)
+
+    if len(df) < 60:
+        return "NO SETUP", None
+
+    st_col = f"SUPERTd_{SuperTrend_LENGTH}_{SuperTrend_MULT}"
+    macd_col = "MACD_12_26_9"
+    signal_col = "MACDs_12_26_9"
+
+    curr = df.iloc[-1]
+    recent = df.iloc[-5:-1]   # previous 4 candles
+
+    signal_time = None
+    signal_type = None
+
+    # ===== CHECK BUY SETUP =====
+    for i in range(1, len(recent)):
+        st_flip = (
+            recent.iloc[i-1][st_col] == -1 and
+            recent.iloc[i][st_col] == 1
+        )
+
+        macd_cross = (
+            recent.iloc[i-1][macd_col] <= recent.iloc[i-1][signal_col]
+            and recent.iloc[i][macd_col] > recent.iloc[i][signal_col]
+        )
+
+        if st_flip and macd_cross:
+            if curr[st_col] == 1 and curr[macd_col] > curr[signal_col]:
+                signal_time = recent.iloc[i].name
+                signal_type = "BUY"
+            break
+
+    # ===== CHECK SELL SETUP =====
+    if signal_type is None:
+        for i in range(1, len(recent)):
+            st_flip = (
+                recent.iloc[i-1][st_col] == 1 and
+                recent.iloc[i][st_col] == -1
+            )
+
+            macd_cross = (
+                recent.iloc[i-1][macd_col] >= recent.iloc[i-1][signal_col]
+                and recent.iloc[i][macd_col] < recent.iloc[i][signal_col]
+            )
+
+            if st_flip and macd_cross:
+                if curr[st_col] == -1 and curr[macd_col] < curr[signal_col]:
+                    signal_time = recent.iloc[i].name
+                    signal_type = "SELL"
+                break
+
+    if signal_type:
+        return signal_type, signal_time
+
+    return "NO SETUP", None
+
+
+
+def ema_8_30(symbol):
+    df = fetch_data(symbol)
+    df = apply_indicators(df)
+
+    if len(df) < 50:
+        return "NO SETUP", None
+
+    curr = df.iloc[-1]
+    recent = df.iloc[-5:-1]   # previous 4 candles
+
+    signal_time = None
+    signal_type = None
+
+    # ===== BUY SETUP =====
+    for i in range(1, len(recent)):
+        if (
+            recent.iloc[i-1]["EMA8"] <= recent.iloc[i-1]["EMA30"]
+            and recent.iloc[i]["EMA8"] > recent.iloc[i]["EMA30"]
+        ):
+            if curr["EMA8"] > curr["EMA30"] and curr["Close"] > curr["EMA30"]:
+                signal_time = recent.iloc[i].name
+                signal_type = "BUY"
+            break
+
+    # ===== SELL SETUP =====
+    if signal_type is None:
+        for i in range(1, len(recent)):
+            if (
+                recent.iloc[i-1]["EMA8"] >= recent.iloc[i-1]["EMA30"]
+                and recent.iloc[i]["EMA8"] < recent.iloc[i]["EMA30"]
+            ):
+                if curr["EMA8"] < curr["EMA30"] and curr["Close"] < curr["EMA30"]:
+                    signal_time = recent.iloc[i].name
+                    signal_type = "SELL"
+                break
+
+    if signal_type:
+        return signal_type, signal_time
+
+    return "NO SETUP", None
+
+
+
+# ---------------- UI ----------------
+run = st.button("🔄 Scan Market")
+
+col1, col2 = st.columns(2)
+
+if run:
+    st_macd = []
+    ema_results = []
+
+    with st.spinner("Scanning stocks..."):
+        for sym in SYMBOLS:
+            signal, t = supertrend_macd(sym)
+            st_macd.append({
+                "Stock": sym,
+                "Signal": signal,
+                "Time": t.strftime("%d-%m %H:%M") if t else "-"
+            })
+
+            signal, t = ema_8_30(sym)
+            ema_results.append({
+                "Stock": sym,
+                "Signal": signal,
+                "Time": t.strftime("%d-%m %H:%M") if t else "-"
+            })
+        
+        st_macd.sort(key=lambda x: (x["Signal"] != "BUY", x["Signal"] != "SELL"))
+        ema_results.sort(key=lambda x: (x["Signal"] != "BUY", x["Signal"] != "SELL"))
+
+    with col1:
+        st.subheader("📉 SuperTrend + MACD")
+        df1 = pd.DataFrame(st_macd)
+        st.dataframe(
+            df1.style.applymap(
+                lambda x: "color: green" if x == "BUY"
+                else "color: red" if x == "SELL"
+                else "color: grey",
+                subset=["Signal"]
+            ),
+            use_container_width=True
+        )
+
+    with col2:
+        st.subheader("📈 EMA 8–30 Strategy")
+        df2 = pd.DataFrame(ema_results)
+        st.dataframe(
+            df2.style.applymap(
+                lambda x: "color: green" if x == "BUY"
+                else "color: red" if x == "SELL"
+                else "color: grey",
+                subset=["Signal"]
+            ),
+            use_container_width=True
+        )

@@ -1,0 +1,12 @@
+# add essential ignorable files and directories here
+.DS_Store
+node_modules/
+dist/
+.env
+.vscode/
+.idea/
+*.log
+coverage/   
+
+myenvir/
+myenvir
