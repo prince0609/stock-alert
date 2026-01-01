@@ -4,6 +4,24 @@ import pandas_ta as ta
 import streamlit as st
 
 # ================= CONFIG =================
+
+# SYMBOLS = ["360ONE.NS",
+#     "ABB.NS",
+#     "APLAPOLLO.NS",
+#     "AUBANK.NS",
+#     "ADANIENSOL.NS",
+#     "ADANIENT.NS",
+#     "ADANIGREEN.NS",
+#     "ADANIPORTS.NS",
+#     "ABCAPITAL.NS",
+#     "ALKEM.NS",
+#     "AMBER.NS",
+#     "AMBUJACEM.NS",
+#     "ANGELONE.NS",
+#     "APOLLOHOSP.NS",
+#     "ASHOKLEY.NS",
+#     "ASIANPAINT.NS",]
+
 SYMBOLS = [
     "360ONE.NS",
     "ABB.NS",
@@ -253,17 +271,33 @@ def fetch_data(symbol):
 
 
 def apply_indicators(df):
+    # ---- EMAs ----
     df["EMA8"] = ta.ema(df["Close"], length=8)
     df["EMA30"] = ta.ema(df["Close"], length=30)
 
+    # ---- SuperTrend ----
     st_df = ta.supertrend(
-        high=df["High"], low=df["Low"], close=df["Close"],
-        length=SuperTrend_LENGTH, multiplier=SuperTrend_MULT
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        length=SuperTrend_LENGTH,
+        multiplier=SuperTrend_MULT
     )
     df = pd.concat([df, st_df], axis=1)
 
+    # ---- MACD ----
     macd = ta.macd(df["Close"])
     df = pd.concat([df, macd], axis=1)
+
+    # ---- ADX (Trend Strength) ----
+    adx = ta.adx(
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"],
+        length=14
+    )
+    df = pd.concat([df, adx], axis=1)
+
     return df
 
 # ---------------- STRATEGIES ----------------
@@ -272,7 +306,7 @@ def supertrend_macd(symbol):
     df = apply_indicators(df)
 
     if len(df) < 60:
-        return "NO SETUP", None
+        return "NO SETUP", None, None
 
     st_col = f"SUPERTd_{SuperTrend_LENGTH}_{SuperTrend_MULT}"
     macd_col = "MACD_12_26_9"
@@ -322,9 +356,9 @@ def supertrend_macd(symbol):
                 break
 
     if signal_type:
-        return signal_type, signal_time
+        return signal_type, signal_time, curr["ADX_14"]
 
-    return "NO SETUP", None
+    return "NO SETUP", None, None
 
 
 
@@ -333,7 +367,7 @@ def ema_8_30(symbol):
     df = apply_indicators(df)
 
     if len(df) < 50:
-        return "NO SETUP", None
+        return "NO SETUP", None, None
 
     curr = df.iloc[-1]
     recent = df.iloc[-5:-1]   # previous 4 candles
@@ -365,12 +399,9 @@ def ema_8_30(symbol):
                 break
 
     if signal_type:
-        return signal_type, signal_time
+        return signal_type, signal_time, curr["ADX_14"]
 
-    return "NO SETUP", None
-
-
-
+    return "NO SETUP", None, None
 # ---------------- UI ----------------
 run = st.button("🔄 Scan Market")
 
@@ -382,17 +413,19 @@ if run:
 
     with st.spinner("Scanning stocks..."):
         for sym in SYMBOLS:
-            signal, t = supertrend_macd(sym)
+            signal, t, adx = supertrend_macd(sym)
             st_macd.append({
                 "Stock": sym,
                 "Signal": signal,
+                "ADX": adx,
                 "Time": t.strftime("%d-%m %H:%M") if t else "-"
             })
 
-            signal, t = ema_8_30(sym)
+            signal, t, adx = ema_8_30(sym)
             ema_results.append({
                 "Stock": sym,
                 "Signal": signal,
+                "ADX": adx,
                 "Time": t.strftime("%d-%m %H:%M") if t else "-"
             })
         
