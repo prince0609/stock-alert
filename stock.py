@@ -429,8 +429,15 @@ if run:
                 "Time": t.strftime("%d-%m %H:%M") if t else "-"
             })
         
-        st_macd.sort(key=lambda x: (x["Signal"] != "BUY", x["Signal"] != "SELL"))
-        ema_results.sort(key=lambda x: (x["Signal"] != "BUY", x["Signal"] != "SELL"))
+        st_macd = [
+            row for row in st_macd
+            if row["Signal"] in ("BUY", "SELL")
+        ]
+
+        ema_results = [
+            row for row in ema_results
+            if row["Signal"] in ("BUY", "SELL")
+        ]
 
     with col1:
         st.subheader("📉 SuperTrend + MACD")
